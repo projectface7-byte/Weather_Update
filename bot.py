@@ -38,7 +38,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 # --- Configuration ---
 TELEGRAM_TOKEN = "7826068822:AAEjwtMeuK6pQvPfIx6t7RsrQ_IvVqaEy4g"
-DEVELOPER_CHAT_ID = 7191595289  # Replace with your chat ID to receive error notifications
+DEVELOPER_CHAT_ID = None  # Replace with your chat ID to receive error notifications
 MAIN_CHANNEL_ID = "@Unix_Bots"  # The public username of the channel to check for membership
 
 # --- Rate Limiting & Cleanup Configuration ---
@@ -412,7 +412,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     update_user_activity(user_id)
     
     # Determine the message object to reply to.
-    # This is the key fix for the AttributeError.
     message = update.message if update.message else update.callback_query.message
 
     if not await check_channel_membership(update, context):
@@ -600,7 +599,15 @@ async def process_location_request(update: Update, context: ContextTypes.DEFAULT
         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Refresh", callback_data=f"refresh_{latitude}_{longitude}")]])
         
         if message_to_edit:
-            await message_to_edit.edit_text(weather_message, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard, disable_web_page_preview=True)
+            try:
+                await message_to_edit.edit_text(weather_message, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard, disable_web_page_preview=True)
+            except BadRequest as e:
+                if "Message is not modified" in str(e):
+                    logger.info("Content is the same, no need to edit.")
+                    if update.callback_query:
+                        await update.callback_query.answer("Weather is already up-to-date.")
+                else:
+                    raise e # Re-raise other errors
         else:
             await safe_reply_markdown(update, weather_message, keyboard)
         
@@ -636,12 +643,9 @@ async def handle_refresh(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if round(saved_lat, 4) == round(latitude, 4) and round(saved_lon, 4) == round(longitude, 4):
             display_name = saved_name
     
-    try:
-        await query.answer("Refreshing...")
-        await process_location_request(update, context, latitude, longitude, display_name, message_to_edit=query.message)
-    except Exception as e:
-        logger.warning(f"Couldn't edit message for refresh: {str(e)}")
-        await process_location_request(update, context, latitude, longitude, display_name)
+    await query.answer("Refreshing...")
+    await process_location_request(update, context, latitude, longitude, display_name, message_to_edit=query.message)
+
 
 async def safe_reply(update: Update, text: str) -> None:
     try:
